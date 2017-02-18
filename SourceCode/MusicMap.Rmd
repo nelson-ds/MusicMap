@@ -1,0 +1,160 @@
+---
+title: "In-store Music Experience Quantification"
+author: "Nelson Dsouza"
+date: "Jan 9, 2017"
+output: pdf_document
+---
+
+# Preparation
+
+Reading libraries and data
+```{r, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(corrplot)
+library(GPArotation)
+
+ud <- read.csv("play_udist_final.csv")
+```
+
+Checking correlation
+```{r}
+# Calculating the correlation matrix
+ud.cor <- cor(ud[,-(1:2)])
+corrplot(ud.cor, tl.cex = .7, tl.srt = 45)
+```
+
+We see that there is good amount of correlation in the data.
+
+## PCA Analysis
+
+Since we have 18 genre, we would require 18 dimensions to visualize the information. Let us see if we can reduce the dimensions using PCA.
+
+```{r}
+ud.pc <- princomp(ud[,-(1:2)])
+#print(ud.pc$loadings)
+#summary(ud.pc)
+plot(ud.pc, main = "University District Screeplot")
+```
+
+We can see that the first two principal components captures roughly 90\% of the variability for University District data. Thus the first two eigenvalues are much larger than any of the remaining eigenvalues for University District.
+
+Now plotting cumulative variance explained to select how many principal components would be appropriate for adequately preserving "most of the information" in the data. 
+```{r}
+plot(cumsum(ud.pc$sdev^2 / sum(ud.pc$sdev^2)), xlab = "PCs", 
+     ylab = "Cumulative Var exp", type = "b", ylim = c(0,1), 
+     main = "Scree plot University District")
+```
+
+Plotting first 2 components and setting color by industry
+```{r}
+ggplot(ud,aes(ud.pc$scores[,1],ud.pc$scores[,2],
+              color=ud$industry, label=ud[,1])) + xlab("PC1") + ylab("PC2") +
+              ggtitle("Data after reducing dimensions") +
+              geom_point(size=1) +
+              geom_text()
+```
+
+From PCA we see that the first 2 components are enough to explain the bulk of the data which means we can compress the multiple genre dimensions into 2 dimensions.
+
+## Factor Analysis
+
+```{r}
+# Obtaining 2 latent factors since PCA suggested 2 dimensions
+ud.fa <- factanal(ud[-(1:2)], factors=2, rotation = "none", scores = "regression")
+ud.fa.vm <- factanal(ud[-(1:2)], factors=2, rotation="varimax", scores="regression")
+ud.fa.om <- factanal(ud[-(1:2)], factors=2, rotation="oblimin", scores="regression")
+
+ud.fa.vm
+```
+
+We see that for University District data, the model gives a good fit.
+
+Checking reconstructed correlaton matrix for goodness of fit
+```{r}
+# Obtaining reconstructed matrix and subtracting the value of original matrix
+ud.reconst.cor <- loadings(ud.fa) %*% t(loadings(ud.fa)) + diag(ud.fa$uniquenesses)
+ud.diff <- round(abs(ud.reconst.cor - ud.cor), 3)
+ud.per.diff = data.frame(rowSums(ud.diff)*100/nrow(ud.diff))
+ud.per.diff
+```
+
+We see the reconstructed correlation matrix is close enough to original matrix! Thus the model is useful.
+
+Now let us see the factor loadings which will help in interpretation
+```{r}
+# Storing factor loadings in dataframe
+ud.factors <- data.frame(cbind(round(ud.fa.vm$loadings[1:18],2),
+                               round(ud.fa.vm$loadings[19:36],2)))
+colnames(ud.factors) <- c("Factor1","Factor2")
+row.names(ud.factors) <- names(ud[3:20])
+
+ud.factors[order(-ud.factors$Factor1),]
+ud.factors[order(-ud.factors$Factor2),]
+```
+
+The above table give the loadings which can be used to interpret the visualization.
+
+Plotting the genres on 2 factors
+```{r}
+ud.fa.vm.ld <- data.frame(ud.fa.vm$loadings[,0:2])
+ggplot(ud.fa.vm.ld,aes(ud.fa.vm.ld[,1],ud.fa.vm.ld[,2],
+          label=row.names(ud.fa.vm.ld))) +
+          geom_text(size=4) +
+          geom_vline(xintercept = 0, linetype = "longdash") +
+          geom_hline(yintercept = 0, linetype = "longdash") + 
+          xlab("Factor1") + ylab("Factor2") + 
+          ggtitle("University District - Genre Map") +
+          theme(text = element_text(size=10), axis.text.x = element_text(hjust=1)) +
+          #ggtitle("Latent Factor Plot - U District") +
+          theme(plot.title = element_text(lineheight=3, size=15)) +
+          theme(axis.title.x = element_text(size = rel(1.5), angle = 00))+
+          theme(axis.title.y = element_text(size = rel(1.5), angle = 90))
+```
+
+Plotting the UDstrict stores for the 2 latent factors
+```{r}
+ud.fa.vm.sc <- data.frame(ud.fa.vm$scores)
+ggplot(ud.fa.vm.sc,aes(ud.fa.vm.sc[,1],ud.fa.vm.sc[,2], color=ud$industry,
+          label=ud[,1])) +
+          geom_vline(xintercept = 0, linetype = "longdash") +
+          geom_hline(yintercept = 0, linetype = "longdash") +
+          geom_text(size=4) +
+          scale_colour_manual(values = c("red","blue", "green", "chocolate4", "black")) +
+          xlab("Score1") + ylab("Score2") + 
+          xlab("Factor1") + ylab("Factor2") + 
+          ggtitle("University District - Music Map") +
+          theme(text = element_text(size=10), axis.text.x = element_text(hjust=1)) +
+          #ggtitle("Score Plot - U District") +
+          theme(plot.title = element_text(lineheight=3, size=15)) +
+          theme(axis.title.x = element_text(size = rel(1.5), angle = 00))+
+          theme(axis.title.y = element_text(size = rel(1.5), angle = 90))
+```
+
+This gives us a 'MUSIC MAP' which helps visualize the quantified in-store music experience.
+
+## Cluster Analysis
+
+```{r}
+# Normalizing data
+ud.normalized.rows <- t(apply(ud[,-(1:2)], 1, function(x)(x-min(x))/(max(x)-min(x))))
+ud.norm <- cbind(ud[,1:2], ud.normalized.rows)
+
+# Nested for loops for calculating distance matrix
+ud.distance <- matrix(0, nrow = 20, ncol = 20)
+colnames(ud.distance) <- ud[,1]
+row.names(ud.distance) <- ud[,1]
+
+for(i in 1:20){
+  for(j in 1:i){
+    ud.distance[i, j] <- sum(sqrt((ud.norm[i,3:20] - ud.norm[j,3:20])^2))
+  }
+}
+ud.dist <- as.dist(ud.distance)
+
+# Applying clustering
+ud.clusters <- hclust(ud.dist, method = "complete")
+plot(ud.clusters, main="Dendrogram of Stores - University District Seattle",
+     xlab="Clusters", ylab="Distance")
+```
+
+Clusters are an alternative method of visualizing the 'musical distance' between the different stores.
